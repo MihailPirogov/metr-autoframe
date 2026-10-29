@@ -1,0 +1,10 @@
+build/
+dist/
+__pycache__/
+*.spec
+*.log
+MetrAutoFrame.json
+preset*.xml
+*.vmix
+*.onnx
+.venv/
