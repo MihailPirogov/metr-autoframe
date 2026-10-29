@@ -33,7 +33,7 @@
 - Работает с локальным и удалённым vMix (кадры камер через DP Thumbnail Server).
 - Список шаблонов — в простом `шаблоны.txt`, перечитывается на лету.
 
-<p align="center"><img src="docs/screenshots/before_after.jpg" width="820" alt="До / после"><br><i>Слева — до, справа — после одной кнопки</i></p>
+<p align="center"><img src="docs/screenshots/before_after.jpg" width="820" alt="До и после автоматического кадрирования"><br><i>Слева — исходные широкие планы: лица разного размера и не по центру. Справа — кадрирование MetrAutoFrame.</i></p>
 <p align="center"><img src="docs/screenshots/result.jpg" width="820" alt="Результат"><br><i>Шаблон с видео-оформлением: окна найдены по альфа-каналу</i></p>
 
 ### Установка и запуск
