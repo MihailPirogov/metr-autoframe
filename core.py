@@ -537,7 +537,7 @@ def dp_frame_windows(base, state, inp_key, title_re):
     plan = by_key[inp_key]; out = []; cache = {}
     for o in plan.findall("overlay"):
         src = by_key.get(o.get("key"))
-        if src is None or src.get("type") != "Image" or not re.search(title_re, src.get("title") or "", re.I): continue
+        if src is None or src.get("type") not in ("Image", "ImageSequence") or not re.search(title_re, src.get("title") or "", re.I): continue
         if o.get("key") not in cache:
             img = dp_thumb(base, o.get("key")); g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA); bgra[:, :, 3] = np.where(g > 200, 255, 0).astype(np.uint8)

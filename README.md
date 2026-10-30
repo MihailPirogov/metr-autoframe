@@ -36,6 +36,10 @@
 <p align="center"><img src="docs/screenshots/before_after.jpg" width="820" alt="До и после автоматического кадрирования"><br><i>Слева — исходные широкие планы: лица разного размера и не по центру. Справа — кадрирование MetrAutoFrame.</i></p>
 <p align="center"><img src="docs/screenshots/result.jpg" width="820" alt="Результат"><br><i>Шаблон с видео-оформлением: окна найдены по альфа-каналу</i></p>
 
+### Несколько гостей на одной камере (v1.1)
+
+Если одна камера стоит в нескольких окнах шаблона (например, «Трое»: камеры 5, 7, 7), программа берёт столько лиц, сколько окон, и раздаёт их слева направо — каждое окно центрируется на своём человеке. Если лиц меньше, чем окон, лишнее окно показывает центр камеры, а в статусе появляется «лиц меньше, чем окон». Окна могут быть любой формы, в том числе вертикальные; рамку можно добавить в vMix как Image или ImageSequence (в имени файла — «рамк», «frame», «okna» или «шаблон»).
+
 ### Установка и запуск
 1. Скачайте `MetrAutoFrame.zip` из [Releases](https://github.com/MihailPirogov/metr-autoframe/releases/latest) и распакуйте. Установка не нужна.
 2. В vMix включите **Settings → Web Controller** (порт 8088).
@@ -79,6 +83,10 @@ Built for the **METR FM** radio video studio. Talk shows with two to four guests
 - **Edge warnings**: a red bar in the preview means the camera has no picture left on that side.
 - Works with local and remote vMix (remote camera frames come from DP Thumbnail Server).
 - Template list lives in a plain `шаблоны.txt`, reloaded on the fly.
+
+### Several guests on one camera (v1.1)
+
+When one camera feeds several windows of a template (e.g. "Three": cameras 5, 7, 7), the app takes as many faces as there are windows and assigns them left to right, each window centred on its own person. If there are fewer faces than windows, the extra window shows the camera centre and the status says so. Windows can have any shape, including portrait; the frame PNG may be added to vMix as Image or ImageSequence (file name containing "frame", "okna", "рамк" or "шаблон").
 
 ### Install & use
 1. Download `MetrAutoFrame.zip` from [Releases](https://github.com/MihailPirogov/metr-autoframe/releases/latest) and unzip. No installer.

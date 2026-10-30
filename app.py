@@ -229,7 +229,7 @@ class App:
                 by_key = {i.get("key"): i for i in st.find("inputs")}
                 for o in by_key[t["key"]].findall("overlay"):
                     src = by_key.get(o.get("key"))
-                    if src is not None and src.get("type") == "Image" and re.search(FRAME_RE, src.get("title") or "", re.I):
+                    if src is not None and src.get("type") in ("Image", "ImageSequence") and re.search(FRAME_RE, src.get("title") or "", re.I):
                         wins = core.frame_windows(core.snapshot_rgba(vm, o.get("key"), os.path.join(s.tmp, "frame.png"))); break
         except Exception as e: s.log(f"рамки: {e}"); wins = []
         if len(wins) != t["n"]:   # v26: decoration video with transparent windows (alpha channel)
@@ -267,15 +267,18 @@ class App:
 
     def place(s, vm=None, verbose=False, send=True):
         L = s.last; vm = vm or s.vm(); cfg = dict(s.cfg); imgs, faces = L["imgs"], L["faces"]
-        items, idx = [], []
+        items, idx, few = [], [], []
         for i, (c, win) in enumerate(zip(L["cams"], L["rects"])):
             fl = faces[c]
             if not fl: continue
-            mx = max(x[2] for x in fl); fl = [x for x in fl if x[2] >= float(s.cfg.get("group_min_face", 0.6)) * mx]   # v22: ignore small/partial faces at the edge
+            nw = L["cams"].count(c)
+            if nw > 1: fl = sorted(sorted(fl, key=lambda x: -x[2])[:nw], key=lambda x: x[0])   # v31: one camera, N windows -> N biggest faces, no small-face filter
+            else: mx = max(x[2] for x in fl); fl = [x for x in fl if x[2] >= float(s.cfg.get("group_min_face", 0.6)) * mx]   # v22: ignore small/partial faces at the edge
             f = core.group_face(fl) if (cfg.get("fit_all", True) and len(fl) > 1 and L["cams"].count(c) == 1) else max(fl, key=lambda x: x[2])
             if L["cams"].count(c) > 1:   # one camera feeding several windows: k-th window gets k-th face from the left
                 srt = sorted(fl, key=lambda x: x[0]); k = [j for j, cc in enumerate(L["cams"]) if cc == c].index(i)
                 if k < len(srt): f = srt[k]
+                else: few.append(c); continue   # v31: fewer faces than windows -> leave this window to the centre fill
             items.append((c, f, win)); idx.append(i)
         info = {}
         if items and cfg.get("fit_all", True):
@@ -285,6 +288,7 @@ class App:
             cfg["_s_min"] = min(smin, cap)
         crops, us = core.uniform_crops([(f, imgs[c].shape[1], imgs[c].shape[0], w[2], w[3]) for c, f, w in items], cfg, info) if items else ([], cfg["frame_size"])
         sent, warn, miss = [], [], {}
+        warn += [f"кам.{c}: лиц меньше, чем окон" for c in sorted(set(few))]
         for n, (i, (c, f, win)) in enumerate(zip(idx, items)):
             h, w = imgs[c].shape[:2]; cr = crops[n]; lp = core.layer_params(cr, w, h, win)
             u0, v0, u1, v1 = lp["crop"]; fx, fy = L["flips"].get(c, (False, False))
