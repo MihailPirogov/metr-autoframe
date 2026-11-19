@@ -1,4 +1,4 @@
-"""vMix auto-framing core: detection, framing math, vMix API."""
+"""Ядро MetrAutoFrame: детектор лиц, расчёт zoom/pan/crop, работа с API vMix."""
 import os, sys, re, time, json, threading, urllib.request, urllib.parse, xml.etree.ElementTree as ET
 import numpy as np, cv2
 
@@ -357,7 +357,9 @@ def discover(state, cfg):
             src = by_key.get(o.get("key"))
             if src is None or src.get("type") not in CAM_TYPES or NOT_CAM.search(src.get("title") or ""): continue
             r = _vis_rect(o, src.get("type"), flip, rot.get(src.get("key")))
-            if r is None: r = _vis_rect(o, src.get("type"), flip, (False, False)) or (0, 0, 64, 64)   # v14: a camera layer is never lost
+            if r is None: r = _vis_rect(o, src.get("type"), flip, (False, False))
+            if r is None:
+                wins.append((int(o.get("index")) + 1, (0, 0, 0, 0), int(src.get("number")))); continue  # v32: unreadable, no 64×64 fallback
             if (r[2] > W * 0.95 and r[3] > H * 0.95): continue   # full-frame layer = background, not a window
             wins.append((int(o.get("index")) + 1, r, int(src.get("number"))))
         if not wins: continue
@@ -568,8 +570,189 @@ def find_media(title, dirs):
         if found: return found
     return None
 
-def video_alpha_windows(state, plan_key, dirs, ffmpeg="ffmpeg", tmpdir=None, log=print, cache_path=None):
-    """v29: windows = transparent holes of the decoration video. Order: cache file (окна.json) -> ffmpeg on the .mov."""
+
+
+def assign_shared(faces, nw, img_w):
+    """Разложить не больше nw лиц по слотам 0..nw-1 слева направо.
+    Лицо попадает в окно, в чьей горизонтальной зоне лежит его центр.
+    Одно лицо — только в одно окно; если зона занята, берём ближайший свободный слот.
+    faces: (x, y, w, h, eye_y) в пикселях кадра. Возвращает {слот: лицо}.
+    """
+    if nw <= 0 or not faces or img_w <= 0: return {}
+    faces = sorted(faces, key=lambda f: f[0] + f[2] / 2.0)
+    used, taken = {}, set()
+    for f in faces:
+        cx = (f[0] + f[2] / 2.0) / img_w
+        slot = min(nw - 1, max(0, int(cx * nw)))
+        if slot in taken:
+            empty = [k for k in range(nw) if k not in taken]
+            if not empty: break
+            slot = min(empty, key=lambda k: abs(k - slot))
+        used[slot] = f; taken.add(slot)
+    return used
+
+
+def empty_region_crop(img_w, img_h, cw, ch, slot, nw, faces, ref_crop=None, pad=8):
+    """Кроп пустого места: кусок кадра (cw×ch) в зоне slot из nw окон слева направо.
+    Тот же размер, что у занятого окна; кроп не выходит за край камеры.
+    Если в кроп попадает лицо гостя, сдвигаем его в сторону, пока гостя не будет видно
+    (если полностью уйти не получается — максимально далеко от лица).
+    """
+    if img_w <= 0 or img_h <= 0:
+        return (0, 0, max(1.0, cw), max(1.0, ch))
+    if ref_crop is not None:
+        t = ref_crop[1]
+    else:
+        t = (img_h - ch) / 2.0
+    if ch >= img_h:
+        t = (img_h - ch) / 2.0
+    else:
+        t = min(max(t, 0.0), img_h - ch)
+    ideal = (slot + 0.5) / max(nw, 1) * img_w - cw / 2.0
+    if cw >= img_w:
+        left0 = (img_w - cw) / 2.0
+        lo = hi = left0
+    else:
+        lo, hi = 0.0, img_w - cw
+        left0 = min(max(ideal, lo), hi)
+    forbidden = []
+    for f in faces or []:
+        gx, gy, gw, gh = f[0] - pad, f[1] - pad, f[2] + 2 * pad, f[3] + 2 * pad
+        if t + ch <= gy or gy + gh <= t:
+            continue
+        forbidden.append((gx - cw, gx + gw))
+    def ok(L):
+        return all(not (L > a + 1e-6 and L < b - 1e-6) for a, b in forbidden)
+    if ok(left0):
+        return (left0, t, cw, ch)
+    segs = [(lo, hi)]
+    for a, b in forbidden:
+        new = []
+        for s0, e0 in segs:
+            if b <= s0 or a >= e0:
+                new.append((s0, e0)); continue
+            if s0 < a: new.append((s0, min(e0, a)))
+            if e0 > b: new.append((max(s0, b), e0))
+        segs = [(s0, e0) for s0, e0 in new if e0 >= s0 - 1e-9]
+    if segs:
+        best, bestd = None, 1e18
+        for s0, e0 in segs:
+            if s0 <= left0 <= e0:
+                return (left0, t, cw, ch)
+            p = s0 if abs(s0 - left0) <= abs(e0 - left0) else e0
+            d = abs(p - left0)
+            if d < bestd:
+                bestd, best = d, p
+        return (best, t, cw, ch)
+    zone_cx = (slot + 0.5) / max(nw, 1) * img_w
+    if faces:
+        gcx = sum(f[0] + f[2] / 2.0 for f in faces) / len(faces)
+        left = lo if gcx >= zone_cx else hi
+    else:
+        left = left0
+    return (left, t, cw, ch)
+
+
+def even_split_crops(img_w, img_h, wins, nw):
+    """Равномерно разрезать кадр камеры на nw окон слева направо, одним зумом
+    (одинаковая высота кропа). wins: [(ширина, высота окна), ...] по порядку слева.
+    Нужно, когда на общей камере нет ни одного лица.
+    """
+    if nw <= 0 or img_w <= 0 or img_h <= 0 or not wins:
+        return []
+    ks, ch = [], img_h
+    for ww, wh in wins:
+        k = (ww / max(wh, 1e-6)) * (img_w / W) / (img_h / H)
+        ks.append(k)
+        ch = min(ch, img_h, (img_w / nw) / k if k else img_h)
+    ch = max(ch, 1.0)
+    out = []
+    for slot, k in enumerate(ks):
+        cw = max(ch * k, 1.0)
+        zone_cx = (slot + 0.5) / nw * img_w
+        if cw >= img_w:
+            left = (img_w - cw) / 2.0
+        else:
+            left = min(max(zone_cx - cw / 2.0, 0.0), img_w - cw)
+        top = (img_h - ch) / 2.0
+        if ch < img_h:
+            top = min(max(top, 0.0), img_h - ch)
+        out.append((left, top, cw, ch))
+    return out
+
+
+
+def check_windows(wins, min_side=200, canvas=(W, H), overlap=0.25, margin=20):
+    """Проверка окон перед отправкой в vMix: вернуть список ошибок на русском.
+    Пустой список — окна можно кадрировать. Отсекаются слишком маленькие (<200 px),
+    нечитаемые, выходящие за кадр 1920×1080 и сильно пересекающиеся окна."""
+    cw, ch = canvas
+    if not wins:
+        return ["окна не прочитаны"]
+    errs = []
+    for i, w in enumerate(wins, 1):
+        try:
+            x, y, ww, hh = [int(v) for v in w[:4]]
+        except Exception:
+            errs.append(f"окно {i} не удалось прочитать"); continue
+        if ww < min_side or hh < min_side:
+            errs.append(f"окно {i} слишком маленькое ({ww}×{hh})")
+        if ww <= 0 or hh <= 0 or x + ww <= 0 or y + hh <= 0 or x >= cw or y >= ch:
+            errs.append(f"окно {i} вне кадра ({x},{y},{ww}×{hh})")
+        elif x < -margin or y < -margin or x + ww > cw + margin or y + hh > ch + margin:
+            errs.append(f"окно {i} выходит за кадр ({x},{y},{ww}×{hh})")
+    def area(r):
+        return max(0, r[2]) * max(0, r[3])
+    def inter(a, b):
+        x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+        x1, y1 = min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])
+        return max(0, x1 - x0) * max(0, y1 - y0)
+    for i, a in enumerate(wins):
+        if len(a) < 4 or a[2] <= 0 or a[3] <= 0: continue
+        for j, b in enumerate(wins):
+            if j <= i or len(b) < 4 or b[2] <= 0 or b[3] <= 0: continue
+            ix = inter(a, b); lim = overlap * min(area(a), area(b))
+            if lim > 0 and ix > lim:
+                errs.append(f"окна {i + 1} и {j + 1} сильно пересекаются")
+    # unique, keep order
+    seen, out = set(), []
+    for e in errs:
+        if e not in seen:
+            seen.add(e); out.append(e)
+    return out
+
+
+def json_windows(state, plan_key, cache_path, log=print):
+    """Windows from окна.json, keyed by the decoration video's title (exact, then case-insensitive)."""
+    if not cache_path or not os.path.exists(cache_path):
+        return []
+    try:
+        cache = json.load(open(cache_path, encoding="utf-8-sig"))
+    except Exception as e:
+        log(f"окна.json не прочитан: {e}"); return []
+    lower = {str(k).strip().lower(): v for k, v in cache.items()}
+    by_key = {i.get("key"): i for i in state.find("inputs")}; plan = by_key.get(plan_key)
+    if plan is None: return []
+    out = []
+    for o in plan.findall("overlay"):
+        src = by_key.get(o.get("key"))
+        if src is None or src.get("type") not in ("Video", "AudioFile", "VideoList"): continue
+        title = src.get("title") or ""
+        raw = cache.get(title)
+        if raw is None: raw = lower.get(title.strip().lower())
+        if not raw: continue
+        wins = [tuple(w) for w in raw]
+        pos = o.find("position"); fx, fy, fw, fh = 0.0, 0.0, float(W), float(H)
+        if pos is not None and pos.get("width"):
+            fx, fy, fw, fh = (float(pos.get(k)) for k in ("x", "y", "width", "height"))
+        for (x, y, w, h) in wins:
+            out.append((round(fx + x * fw / W), round(fy + y * fh / H), round(w * fw / W), round(h * fh / H)))
+        log(f"окна «{title}» из окна.json: {wins}")
+    return sorted(set(out))
+
+
+def video_alpha_windows(state, plan_key, dirs, ffmpeg="ffmpeg", tmpdir=None, log=print, cache_path=None, use_cache=True):
+    """v29: windows from the decoration video alpha. Cache (окна.json) first unless use_cache=False."""
     import subprocess, shutil, tempfile
     cache = {}
     if cache_path and os.path.exists(cache_path):
@@ -584,7 +767,7 @@ def video_alpha_windows(state, plan_key, dirs, ffmpeg="ffmpeg", tmpdir=None, log
         src = by_key.get(o.get("key"))
         if src is None or src.get("type") not in ("Video", "AudioFile", "VideoList"): continue
         wins = None; title = src.get("title") or ""
-        if title in cache: wins = [tuple(w) for w in cache[title]]; log(f"окна «{title}» из окна.json: {wins}")
+        if use_cache and title in cache: wins = [tuple(w) for w in cache[title]]; log(f"окна «{title}» из окна.json: {wins}")
         if wins is None:
             if not ff: log("ffmpeg не найден и окна.json не содержит это видео"); continue
             path = find_media(title, dirs)

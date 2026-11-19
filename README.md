@@ -31,26 +31,36 @@
 - Маркер **● ЭФИР** — видно, какой шаблон сейчас в программе.
 - **Предупреждение о краях**: красная полоса в превью — с этой стороны камере не хватает картинки.
 - Работает с локальным и удалённым vMix (кадры камер через DP Thumbnail Server).
-- Список шаблонов — в простом `шаблоны.txt`, перечитывается на лету.
+- Список шаблонов — в простом `шаблоны.txt` **по названию входа** (или по номеру), перечитывается на лету.
+- Кнопка **«Отменить»** возвращает слоям прежнее кадрирование.
+- История версий — в [CHANGELOG.md](CHANGELOG.md).
 
 <p align="center"><img src="docs/screenshots/before_after.jpg" width="820" alt="До и после автоматического кадрирования"><br><i>Слева — исходные широкие планы: лица разного размера и не по центру. Справа — кадрирование MetrAutoFrame.</i></p>
 <p align="center"><img src="docs/screenshots/result.jpg" width="820" alt="Результат"><br><i>Шаблон с видео-оформлением: окна найдены по альфа-каналу</i></p>
 
-### Несколько гостей на одной камере (v1.1)
+### Несколько гостей на одной камере (v1.2.2)
 
-Если одна камера стоит в нескольких окнах шаблона (например, «Трое»: камеры 5, 7, 7), программа берёт столько лиц, сколько окон, и раздаёт их слева направо — каждое окно центрируется на своём человеке. Если лиц меньше, чем окон, лишнее окно показывает центр камеры, а в статусе появляется «лиц меньше, чем окон». Окна могут быть любой формы, в том числе вертикальные; рамку можно добавить в vMix как Image или ImageSequence (в имени файла — «рамк», «frame», «okna» или «шаблон»).
+Если одна камера стоит в нескольких окнах шаблона (например, «Трое»: левое окно — одна камера, два правых — другая), программа берёт столько лиц, сколько окон, и ставит каждого человека в окно **со своей стороны кадра**. Одно лицо никогда не дублируется в двух окнах.
+
+Если людей меньше, чем окон, в пустое окно ставится **свободная часть этой же камеры** — то место, где сидел бы второй гость, в том же масштабе и без этого человека в кадре. В статусе: «в окне N пустое место». Если на камере никого нет, окна делят картинку поровну слева направо.
+
+Окна могут быть любой формы, в том числе вертикальные. Рамку можно добавить в vMix как Image или ImageSequence (в имени файла — «рамк», «frame», «okna» или «шаблон»).
+
+Окна ищутся в таком порядке: прозрачные отверстия PNG-рамки → кеш `окна.json` → альфа-канал видео-оформления → геометрия слоёв камер. Перед отправкой в vMix программа проверяет, что окна достаточно большие, читаются, не выходят за кадр и не наезжают друг на друга; иначе кадрирование отменяется.
 
 ### Установка и запуск
 1. Скачайте `MetrAutoFrame.zip` из [Releases](https://github.com/MihailPirogov/metr-autoframe/releases/latest) и распакуйте. Установка не нужна.
 2. В vMix включите **Settings → Web Controller** (порт 8088).
 3. Для удалённого vMix поставьте на машину vMix **DP Thumbnail Server** (порт 8098) — через него берутся кадры камер.
-4. Впишите свои шаблоны в `шаблоны.txt`:
+4. Впишите свои шаблоны в `шаблоны.txt` (лучше по **названию** входа, номер — запасной вариант):
    ```
    vMix = 192.168.0.100
-   Двое в студии = 10
-   Трое в студии = 15
+   Двое в студии = Двое
+   Трое в студии = Трое
+   Выездной эфир = 10
    ```
-5. Запустите `MetrAutoFrame.exe`, выберите шаблон и нажмите **«Кадрировать»**.
+   Сначала ищется точное совпадение названия (регистр важен: «Трое» и «трое» — разные входы), затем без учёта регистра, затем номер. Если номер устарел, программа попробует найти вход по имени слева.
+5. Запустите `MetrAutoFrame.exe`, выберите шаблон и нажмите **«Кадрировать»**. Метка **● ЭФИР** обновляется сама, раз в две секунды, по тому входу, который сейчас в Program.
 
 В шаблоне нужны слои-камеры и (желательно) картинка рамок с прозрачными окнами — имя входа содержит «шаблон», «рамк», «frame» или «okna». Либо видео-оформление с прозрачными «дырками».
 
@@ -82,18 +92,26 @@ Built for the **METR FM** radio video studio. Talk shows with two to four guests
 - **● ЭФИР (ON AIR)** marker shows which template is in Program.
 - **Edge warnings**: a red bar in the preview means the camera has no picture left on that side.
 - Works with local and remote vMix (remote camera frames come from DP Thumbnail Server).
-- Template list lives in a plain `шаблоны.txt`, reloaded on the fly.
+- Template list lives in a plain `шаблоны.txt`, preferably **by vMix input title** (a number still works), reloaded on the fly.
+- **Undo** restores the previous zoom / pan / crop after a framing.
+- See [CHANGELOG.md](CHANGELOG.md) for the version history.
 
-### Several guests on one camera (v1.1)
+### Several guests on one camera (v1.2.2)
 
-When one camera feeds several windows of a template (e.g. "Three": cameras 5, 7, 7), the app takes as many faces as there are windows and assigns them left to right, each window centred on its own person. If there are fewer faces than windows, the extra window shows the camera centre and the status says so. Windows can have any shape, including portrait; the frame PNG may be added to vMix as Image or ImageSequence (file name containing "frame", "okna", "рамк" or "шаблон").
+When one camera feeds several windows of a template (e.g. "Three": one camera in the left window, another in the two right-hand ones), the app takes as many faces as there are windows and puts each person in the window **on their side of the frame**. One face is never copied into two windows.
+
+If there are fewer people than windows, the empty window shows the **free part of the same camera** — the seat where the second guest would sit — at the same zoom, with that guest kept out of the crop. The status reads "в окне N пустое место". If the camera has no faces at all, its windows split the picture evenly left to right.
+
+Windows can have any shape, including portrait. The frame PNG may be added to vMix as Image or ImageSequence (file name containing "frame", "okna", "рамк" or "шаблон").
+
+Windows are resolved in this order: transparent holes in the PNG frame → `окна.json` cache → video-overlay alpha channel → camera layer geometry. Before anything is sent to vMix the app checks that the windows are large enough, readable, inside the canvas and not heavily overlapping; otherwise framing is cancelled.
 
 ### Install & use
 1. Download `MetrAutoFrame.zip` from [Releases](https://github.com/MihailPirogov/metr-autoframe/releases/latest) and unzip. No installer.
 2. In vMix enable **Settings → Web Controller** (port 8088).
 3. For a remote vMix, run **DP Thumbnail Server** (port 8098) on the vMix machine.
-4. List your templates in `шаблоны.txt` (`Display name = vMix input number`, optional `vMix = <IP>`).
-5. Run `MetrAutoFrame.exe`, choose a template, press **«Кадрировать»** (Frame).
+4. List your templates in `шаблоны.txt` (`Display name = vMix input title`, or a number; optional `vMix = <IP>`). Titles are matched exactly first (case matters), then case-insensitively, then by number.
+5. Run `MetrAutoFrame.exe`, choose a template, press **«Кадрировать»** (Frame). The **● ЭФИР** (ON AIR) marker follows Program automatically, every two seconds.
 
 ### Build from source
 See the commands in the Russian section: create a venv, `pip install -r requirements.txt`, `python get_model.py` (downloads YuNet from OpenCV Zoo), then run PyInstaller. Or simply `python app.py`.
